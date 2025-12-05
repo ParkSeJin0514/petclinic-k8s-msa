@@ -1,0 +1,151 @@
+---
+# ============================================================================
+# Visits Service Deployment
+# ============================================================================
+# Spring Boot 마이크로서비스 - 방문 기록 관리
+# - MySQL Database 필요
+# - Eureka Discovery Server에 등록
+# - Config Server에서 설정 로드
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: visits-service
+  namespace: petclinic
+  labels:
+    app: visits-service
+    tier: business
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: visits-service
+  template:
+    metadata:
+      labels:
+        app: visits-service
+        tier: business
+        version: v1
+    spec:
+      containers:
+        - name: visits-service
+          image: springcommunity/spring-petclinic-visits-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8082
+              protocol: TCP
+          
+          # Resource Limits
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          
+          # Health Checks
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 200
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 15
+          
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 120
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 5
+          
+          # Environment Variables
+          env:
+            # Spring Profile
+            - name: SPRING_PROFILES_ACTIVE
+              value: "kubernetes,mysql"
+            
+            # Server Port (강제 고정 - 중요!)
+            - name: SERVER_PORT
+              value: "8082"
+            
+            # Config Server (첫 번째 우선순위)
+            - name: CONFIG_SERVER_URL
+              value: "http://config-server:8888"
+            
+            # 🔥 Eureka 설정을 JSON으로 강제 적용
+            - name: SPRING_APPLICATION_JSON
+              value: |
+                {
+                  "eureka": {
+                    "instance": {
+                      "preferIpAddress": true
+                    },
+                    "client": {
+                      "serviceUrl": {
+                        "defaultZone": "http://discovery-server:8761/eureka/"
+                      }
+                    }
+                  }
+                }
+            
+            # Database Configuration (Secret에서 로드)
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: petclinic-db-secret
+                  key: SPRING_DATASOURCE_URL
+            
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: petclinic-db-secret
+                  key: SPRING_DATASOURCE_USERNAME
+            
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: petclinic-db-secret
+                  key: SPRING_DATASOURCE_PASSWORD
+            
+            # JPA/Hibernate 설정
+            - name: SPRING_JPA_HIBERNATE_DDL_AUTO
+              value: "update"
+            
+            - name: SPRING_JPA_SHOW_SQL
+              value: "false"
+            
+            # Connection Pool 설정
+            - name: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+              value: "10"
+            
+            - name: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+              value: "5"
+
+---
+# ============================================================================
+# Visits Service
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: visits-service
+  namespace: petclinic
+  labels:
+    app: visits-service
+    tier: business
+spec:
+  selector:
+    app: visits-service
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+      protocol: TCP
+  type: ClusterIP

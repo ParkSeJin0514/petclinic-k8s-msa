@@ -1,0 +1,98 @@
+---
+# API Gateway Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: petclinic
+  labels:
+    app: api-gateway
+    tier: gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        tier: gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: springcommunity/spring-petclinic-api-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          # Health Check
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 200
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 5
+
+          env:
+            # 프로필: kubernetes + mysql
+            - name: SPRING_PROFILES_ACTIVE
+              value: "kubernetes,mysql"
+
+            # ★ Eureka 서버 URL을 강제로 discovery-server로 고정
+            - name: SPRING_APPLICATION_JSON
+              value: |
+                {
+                  "eureka": {
+                    "client": {
+                      "serviceUrl": {
+                        "defaultZone": "http://discovery-server:8761/eureka/"
+                      }
+                    }
+                  }
+                }
+
+            # 서버 포트 고정
+            - name: SERVER_PORT
+              value: "8080"
+
+            # Config Server URL (이미 이렇게 쓰고 있었으면 그대로 둬도 됨)
+            - name: CONFIG_SERVER_URL
+              value: "http://config-server:8888"
+
+---
+# API Gateway Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: petclinic
+  labels:
+    app: api-gateway
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
