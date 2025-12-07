@@ -1,0 +1,54 @@
+---
+# Petclinic Microservices Ingress
+# ALB를 통해 외부에서 접근 가능하도록 설정
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: petclinic-ingress
+  namespace: petclinic
+  annotations:
+    # ALB 설정
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/load-balancer-name: petclinic-microservices-alb
+    
+    # HTTPS 설정 (ACM 인증서 ARN을 실제 값으로 교체)
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-2:946775837287:certificate/your-cert-id
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # alb.ingress.kubernetes.io/ssl-redirect: '443'
+    
+    # Health Check 설정
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/success-codes: '200'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    
+    # 태그
+    alb.ingress.kubernetes.io/tags: Environment=production,Project=petclinic-microservices
+    
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          # API Gateway - 메인 애플리케이션
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080
+          
+          # Admin Server (Spring Boot Admin)
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-server
+                port:
+                  number: 9090

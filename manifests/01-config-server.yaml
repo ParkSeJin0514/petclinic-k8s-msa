@@ -1,0 +1,77 @@
+---
+# Config Server Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-server
+  namespace: petclinic
+  labels:
+    app: config-server
+    tier: infrastructure
+spec:
+  replicas: 1  # Config Server는 1개로 충분
+  selector:
+    matchLabels:
+      app: config-server
+  template:
+    metadata:
+      labels:
+        app: config-server
+        tier: infrastructure
+    spec:
+      containers:
+        - name: config-server
+          image: springcommunity/spring-petclinic-config-server:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8888
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Health Check
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8888
+            initialDelaySeconds: 200
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8888
+            initialDelaySeconds: 120
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 5
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "kubernetes"
+            
+            # Server Port (강제 고정 - 중요!)
+            - name: SERVER_PORT
+              value: "8888"
+---
+# Config Server Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: config-server
+  namespace: petclinic
+  labels:
+    app: config-server
+spec:
+  selector:
+    app: config-server
+  ports:
+    - name: http
+      port: 8888
+      targetPort: 8888
+  type: ClusterIP

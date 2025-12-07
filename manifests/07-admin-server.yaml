@@ -1,0 +1,82 @@
+---
+# Admin Server Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-server
+  namespace: petclinic
+  labels:
+    app: admin-server
+    tier: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin-server
+  template:
+    metadata:
+      labels:
+        app: admin-server
+        tier: monitoring
+    spec:
+      containers:
+        - name: admin-server
+          image: springcommunity/spring-petclinic-admin-server:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+          # Health Check
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 9090
+            initialDelaySeconds: 200
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 9090
+            initialDelaySeconds: 120
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 5
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "kubernetes"
+            
+            # Server Port (강제 고정 - 중요!)
+            - name: SERVER_PORT
+              value: "9090"
+            
+            - name: CONFIG_SERVER_URL
+              value: "http://config-server:8888"
+            - name: EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
+              value: "http://discovery-server:8761/eureka/"
+---
+# Admin Server Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-server
+  namespace: petclinic
+  labels:
+    app: admin-server
+spec:
+  selector:
+    app: admin-server
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+  type: ClusterIP

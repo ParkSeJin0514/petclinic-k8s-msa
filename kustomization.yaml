@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: petclinic
+
+resources:
+  - manifests/00-namespace.yaml
+  - manifests/01-config-server.yaml
+  - manifests/02-discovery-server.yaml
+  - manifests/03-customers-service.yaml
+  - manifests/04-visits-service.yaml
+  - manifests/05-vets-service.yaml
+  - manifests/06-api-gateway.yaml
+  - manifests/07-admin-server.yaml
+  - manifests/09-ingress.yaml
+  - manifests/10-monitoring.yaml
+
+images:
+  - name: springcommunity/spring-petclinic-config-server
+    newName: 946775837287.dkr.ecr.ap-northeast-2.amazonaws.com/petclinic-msa/petclinic-config-server
+    newTag: "1.0"
+  
+  - name: springcommunity/spring-petclinic-discovery-server
+    newName: 946775837287.dkr.ecr.ap-northeast-2.amazonaws.com/petclinic-msa/petclinic-discovery-server
+    newTag: "1.0"
+  
+  - name: springcommunity/spring-petclinic-customers-service
+    newName: 946775837287.dkr.ecr.ap-northeast-2.amazonaws.com/petclinic-msa/petclinic-customers-service
+    newTag: "1.0"
+  
+  - name: springcommunity/spring-petclinic-visits-service
+    newName: 946775837287.dkr.ecr.ap-northeast-2.amazonaws.com/petclinic-msa/petclinic-visits-service
+    newTag: "1.0"
+  
+  - name: springcommunity/spring-petclinic-vets-service
+    newName: 946775837287.dkr.ecr.ap-northeast-2.amazonaws.com/petclinic-msa/petclinic-vets-service
+    newTag: "1.0"
+  
+  - name: springcommunity/spring-petclinic-api-gateway
+    newName: 946775837287.dkr.ecr.ap-northeast-2.amazonaws.com/petclinic-msa/petclinic-api-gateway
+    newTag: "1.0"
+  
+  - name: springcommunity/spring-petclinic-admin-server
+    newName: 946775837287.dkr.ecr.ap-northeast-2.amazonaws.com/petclinic-msa/petclinic-admin-server
+    newTag: "1.0"

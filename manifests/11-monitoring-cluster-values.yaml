@@ -1,0 +1,118 @@
+# ============================================================================
+# kube-prometheus-stack Helm Values
+# ============================================================================
+# 사용법:
+#   helm install kube-prometheus prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring --create-namespace \
+#     -f 11-monitoring-cluster-values.yaml
+# ============================================================================
+
+# Prometheus 설정
+prometheus:
+  prometheusSpec:
+    # 서브패스에서 동작하도록 설정
+    externalUrl: "/prometheus"
+    routePrefix: "/prometheus"
+    # 리소스 제한
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    # 데이터 보존 기간
+    retention: 7d
+    # PetClinic 서비스 추가 스크래핑
+    additionalScrapeConfigs:
+      - job_name: 'petclinic-config-server'
+        metrics_path: '/actuator/prometheus'
+        static_configs:
+          - targets: ['config-server.petclinic.svc.cluster.local:8888']
+      - job_name: 'petclinic-discovery-server'
+        metrics_path: '/actuator/prometheus'
+        static_configs:
+          - targets: ['discovery-server.petclinic.svc.cluster.local:8761']
+      - job_name: 'petclinic-customers-service'
+        metrics_path: '/actuator/prometheus'
+        static_configs:
+          - targets: ['customers-service.petclinic.svc.cluster.local:8081']
+      - job_name: 'petclinic-visits-service'
+        metrics_path: '/actuator/prometheus'
+        static_configs:
+          - targets: ['visits-service.petclinic.svc.cluster.local:8082']
+      - job_name: 'petclinic-vets-service'
+        metrics_path: '/actuator/prometheus'
+        static_configs:
+          - targets: ['vets-service.petclinic.svc.cluster.local:8083']
+      - job_name: 'petclinic-api-gateway'
+        metrics_path: '/actuator/prometheus'
+        static_configs:
+          - targets: ['api-gateway.petclinic.svc.cluster.local:8080']
+
+# Grafana 설정
+grafana:
+  adminPassword: admin
+  # 리소스 제한
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  # 기본 대시보드 프로비저닝
+  defaultDashboardsEnabled: true
+  # 사이드카 설정 (대시보드 자동 로드)
+  sidecar:
+    dashboards:
+      enabled: true
+
+# AlertManager 설정
+alertmanager:
+  alertmanagerSpec:
+    externalUrl: "/alertmanager"
+    routePrefix: "/alertmanager"
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+# Node Exporter (노드 메트릭)
+nodeExporter:
+  enabled: true
+
+# Kube State Metrics (K8s 리소스 메트릭)
+kubeStateMetrics:
+  enabled: true
+
+# 기본 규칙 활성화
+defaultRules:
+  create: true
+  rules:
+    alertmanager: true
+    etcd: false  # EKS에서는 etcd 접근 불가
+    general: true
+    k8s: true
+    kubeApiserver: true
+    kubeApiserverAvailability: true
+    kubeApiserverSlos: true
+    kubelet: true
+    kubeProxy: false  # EKS managed
+    kubePrometheusGeneral: true
+    kubePrometheusNodeRecording: true
+    kubernetesApps: true
+    kubernetesResources: true
+    kubernetesStorage: true
+    kubernetesSystem: true
+    kubeScheduler: false  # EKS managed
+    kubeStateMetrics: true
+    network: true
+    node: true
+    nodeExporterAlerting: true
+    nodeExporterRecording: true
+    prometheus: true
+    prometheusOperator: true

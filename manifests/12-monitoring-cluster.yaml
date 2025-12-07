@@ -1,0 +1,120 @@
+---
+# ============================================================================
+# Cluster-wide Monitoring with kube-prometheus-stack
+# ============================================================================
+# 이 파일은 Helm으로 설치한 kube-prometheus-stack에 대한 Ingress를 제공합니다.
+# 10-monitoring.yaml (petclinic namespace)과 독립적으로 동작합니다.
+#
+# 사전 설치:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm repo update
+#   helm install kube-prometheus prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring --create-namespace \
+#     -f 11-monitoring-cluster-values.yaml
+# ============================================================================
+
+---
+# Grafana Ingress (kube-prometheus-stack)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cluster-grafana-ingress
+  namespace: monitoring
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/load-balancer-name: cluster-monitoring-alb
+    alb.ingress.kubernetes.io/group.name: cluster-monitoring
+    alb.ingress.kubernetes.io/group.order: '2'
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-path: /api/health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/success-codes: '200'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/tags: Environment=production,Project=cluster-monitoring
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kube-prometheus-grafana
+                port:
+                  number: 80
+---
+# Prometheus Ingress (kube-prometheus-stack)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cluster-prometheus-ingress
+  namespace: monitoring
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/load-balancer-name: cluster-monitoring-alb
+    alb.ingress.kubernetes.io/group.name: cluster-monitoring
+    alb.ingress.kubernetes.io/group.order: '1'
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-path: /prometheus/-/healthy
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/success-codes: '200'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/tags: Environment=production,Project=cluster-monitoring
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /prometheus
+            pathType: Prefix
+            backend:
+              service:
+                name: kube-prometheus-kube-prome-prometheus
+                port:
+                  number: 9090
+---
+# AlertManager Ingress (kube-prometheus-stack)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cluster-alertmanager-ingress
+  namespace: monitoring
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/load-balancer-name: cluster-monitoring-alb
+    alb.ingress.kubernetes.io/group.name: cluster-monitoring
+    alb.ingress.kubernetes.io/group.order: '3'
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-path: /alertmanager/-/healthy
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/success-codes: '200'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/tags: Environment=production,Project=cluster-monitoring
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /alertmanager
+            pathType: Prefix
+            backend:
+              service:
+                name: kube-prometheus-kube-prome-alertmanager
+                port:
+                  number: 9093

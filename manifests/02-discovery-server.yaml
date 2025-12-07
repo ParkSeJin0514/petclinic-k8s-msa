@@ -1,0 +1,80 @@
+---
+# Discovery Server (Eureka) Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discovery-server
+  namespace: petclinic
+  labels:
+    app: discovery-server
+    tier: infrastructure
+spec:
+  replicas: 1  # Eureka는 단일 인스턴스로 시작
+  selector:
+    matchLabels:
+      app: discovery-server
+  template:
+    metadata:
+      labels:
+        app: discovery-server
+        tier: infrastructure
+    spec:
+      containers:
+        - name: discovery-server
+          image: springcommunity/spring-petclinic-discovery-server:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8761
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Health Check
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8761
+            initialDelaySeconds: 200
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8761
+            initialDelaySeconds: 120
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 5
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "kubernetes"
+            
+            # Server Port (강제 고정 - 중요!)
+            - name: SERVER_PORT
+              value: "8761"
+            
+            - name: CONFIG_SERVER_URL
+              value: "http://config-server:8888"
+---
+# Discovery Server Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: discovery-server
+  namespace: petclinic
+  labels:
+    app: discovery-server
+spec:
+  selector:
+    app: discovery-server
+  ports:
+    - name: http
+      port: 8761
+      targetPort: 8761
+  type: ClusterIP
