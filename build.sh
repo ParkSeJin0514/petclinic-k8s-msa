@@ -44,7 +44,7 @@ echo ""
 # Java 확인
 if ! command -v java &> /dev/null; then
     echo -e "${RED}✗ Java 설치 필요${NC}"
-    echo "  sudo apt update && sudo apt install -y openjdk-17-jdk"
+    echo "sudo apt update && sudo apt install -y openjdk-17-jdk"
     exit 1
 fi
 
