@@ -27,7 +27,6 @@ echo "  - monitoring namespace (모니터링)"
 echo "  - argocd namespace (ArgoCD)"
 echo "  - Jenkins ALB"
 echo "  - 관련 ALB (Application, Monitoring)"
-echo "  - ECR 이미지 (선택)"
 echo ""
 echo -e "${MAGENTA}※ Jenkins EC2는 Terraform destroy로 삭제하세요${NC}"
 echo ""
@@ -37,10 +36,6 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     echo "취소되었습니다."
     exit 0
 fi
-echo ""
-
-# ECR 이미지 삭제 여부 확인
-read -p "ECR 이미지도 삭제하시겠습니까? (y/N): " -n 1 -r DELETE_ECR
 echo ""
 
 # Step 1: kubectl 연결 확인
@@ -203,32 +198,6 @@ for ARN in $PETCLINIC_ALBS; do
     fi
 done
 echo ""
-
-# ECR 이미지 삭제 (선택)
-if [[ $DELETE_ECR =~ ^[Yy]$ ]]; then
-    echo -e "${BLUE}[INFO] ECR 이미지 삭제 중...${NC}"
-    ECR_REPOS=(
-        "petclinic-msa/petclinic-config-server"
-        "petclinic-msa/petclinic-discovery-server"
-        "petclinic-msa/petclinic-customers-service"
-        "petclinic-msa/petclinic-visits-service"
-        "petclinic-msa/petclinic-vets-service"
-        "petclinic-msa/petclinic-api-gateway"
-        "petclinic-msa/petclinic-admin-server"
-        "petclinic-msa/petclinic-genai-service"
-    )
-    
-    for REPO in "${ECR_REPOS[@]}"; do
-        # 모든 이미지 삭제
-        IMAGES=$(aws ecr list-images --repository-name "$REPO" --query 'imageIds[*]' --output json 2>/dev/null || echo "[]")
-        if [ "$IMAGES" != "[]" ] && [ -n "$IMAGES" ]; then
-            echo -e "${YELLOW}  ECR 이미지 삭제: $REPO${NC}"
-            aws ecr batch-delete-image --repository-name "$REPO" --image-ids "$IMAGES" 2>/dev/null || true
-            echo -e "${GREEN}  ✓ $REPO 이미지 삭제됨${NC}"
-        fi
-    done
-    echo ""
-fi
 
 # Target Group 정리
 echo -e "${BLUE}[INFO] 미사용 Target Group 정리 중...${NC}"
