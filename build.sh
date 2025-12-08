@@ -14,7 +14,7 @@ NC='\033[0m'
 AWS_ACCOUNT_ID="946775837287"
 AWS_REGION="ap-northeast-2"
 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-IMAGE_TAG="1.0"
+IMAGE_TAG="${1:-1.0}"  # ★ 수정된 부분: 인자로 받거나 기본값 1.0
 
 SERVICES=(
     "config-server"
