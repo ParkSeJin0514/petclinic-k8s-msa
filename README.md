@@ -7,7 +7,7 @@ Spring Boot Petclinic MSA를 AWS EKS에 배포
 ## 📁 구조
 
 ```
-petclinic-k8s-msa-yes-eureka-main/
+petclinic-k8s-msa/
 ├── manifests/              # Kubernetes 매니페스트
 │   ├── 00-namespace.yaml
 │   ├── 01-config-server.yaml
@@ -22,7 +22,7 @@ petclinic-k8s-msa-yes-eureka-main/
 │   ├── 11-monitoring-cluster-values.yaml    # 클러스터 모니터링 Helm values
 │   └── 12-monitoring-cluster.yaml           # 클러스터 모니터링 Ingress
 ├── build.sh                # 이미지 빌드 스크립트
-├── deploy.sh               # 배포 스크립트
+├── deploy.sh               # 배포 스크립트 (Security Group 자동 설정 포함)
 ├── delete.sh               # 삭제 스크립트
 ├── kustomization.yaml      # Kustomize 설정
 └── README.md
@@ -34,27 +34,98 @@ petclinic-k8s-msa-yes-eureka-main/
 
 ### 전제 조건
 
-- Java 17
-- Docker
+- Java 17 이상
+- Docker (실행 권한 필요)
 - kubectl
-- AWS CLI
+- AWS CLI (ECR 로그인 및 Security Group 설정용)
+- Helm 3.x (클러스터 모니터링용)
+- 소스 코드: `../spring-petclinic-microservices-custom` 디렉토리 필요
 
 ### 1️⃣ 이미지 빌드
 
 ```bash
+# 기본 태그(1.0)로 빌드
 ./build.sh
+
+# 특정 태그로 빌드
+./build.sh 2.0
 ```
 
 ### 2️⃣ 배포
 
 ```bash
+# 대화형 (패스워드 입력 프롬프트)
 ./deploy.sh <RDS_ENDPOINT>
+
+# 비대화형 (패스워드 인자로 전달)
+./deploy.sh <RDS_ENDPOINT> <DB_PASSWORD>
+
+# 예시
+./deploy.sh petclinic-db.xxx.ap-northeast-2.rds.amazonaws.com
 ```
 
 ### 3️⃣ 삭제
 
 ```bash
 ./delete.sh
+```
+
+---
+
+## 🗄️ 데이터베이스 설정
+
+| 항목 | 기본값 |
+|------|--------|
+| Database Name | `petclinic` |
+| Username | `admin` |
+| Port | `3306` |
+
+> **Note**: RDS Password는 배포 시 입력하거나 인자로 전달합니다.
+
+---
+
+## 🔒 Security Group 자동 설정
+
+`deploy.sh` 실행 시 ALB → EKS 클러스터 간 Security Group 인바운드 규칙을 자동으로 설정합니다.
+
+### 자동 설정 내용
+
+- EKS 클러스터 Security Group 자동 감지
+- 모든 PetClinic 관련 ALB Security Group 자동 감지
+- ALB SG → Cluster SG 인바운드 규칙 자동 추가 (TCP 0-65535)
+
+### 출력 예시
+
+```
+[INFO] 🔒 Security Group 인바운드 설정...
+[INFO]   클러스터 SG: sg-08c1ed55d53f98497
+[INFO]   ALB SG: sg-0d918bfa3792c318e
+[SUCCESS]   ✓ sg-0d918bfa3792c318e → sg-08c1ed55d53f98497 인바운드가 이미 설정되어있습니다
+[INFO]   ALB SG: sg-0da5fed8823283cb6
+[SUCCESS]   ✓ sg-0da5fed8823283cb6 → sg-08c1ed55d53f98497 인바운드 규칙 추가 완료
+[SUCCESS] Security Group 설정 완료
+```
+
+### 수동 설정 (필요 시)
+
+```bash
+# 클러스터 Security Group 확인
+aws eks describe-cluster --name <CLUSTER_NAME> \
+  --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' \
+  --output text
+
+# ALB Security Group 확인
+aws elbv2 describe-load-balancers \
+  --query 'LoadBalancers[?contains(LoadBalancerName, `petclinic`)].SecurityGroups[]' \
+  --output text
+
+# 인바운드 규칙 추가
+aws ec2 authorize-security-group-ingress \
+  --group-id <CLUSTER_SG> \
+  --protocol tcp \
+  --port 0-65535 \
+  --source-group <ALB_SG> \
+  --region ap-northeast-2
 ```
 
 ---
@@ -122,11 +193,15 @@ kubectl logs -f -l app=api-gateway -n petclinic
 
 # Kustomize 미리보기
 kubectl kustomize .
+
+# Security Group 확인
+aws ec2 describe-security-groups --group-ids <SG_ID> \
+  --query 'SecurityGroups[0].IpPermissions'
 ```
 
 ---
 
-## 📝 주요 변경사항 (v2.0)
+## 📝 주요 변경사항 (v2.1)
 
 ### ✅ 구조 개선
 - YAML 파일을 `manifests/` 폴더로 이동
@@ -146,6 +221,7 @@ kubectl kustomize .
 - ✅ **PetClinic 모니터링**: Prometheus + Grafana (별도 ALB)
 - ✅ **클러스터 모니터링**: kube-prometheus-stack (Helm)
 - ✅ **3개 ALB 구조**: 애플리케이션, 앱 모니터링, 클러스터 모니터링
+- ✅ **Security Group 자동 설정**: ALB → EKS 클러스터 인바운드 규칙 자동 추가
 
 ### ✅ ECR 이미지
 - 모든 이미지가 ECR에서 관리됨
@@ -153,9 +229,9 @@ kubectl kustomize .
 - Registry: `946775837287.dkr.ecr.ap-northeast-2.amazonaws.com`
 
 ### ✅ 스크립트 개선
-- `build.sh`: 간소화된 빌드 프로세스
-- `deploy.sh`: Kustomize 기반 배포
-- `delete.sh`: 완전한 리소스 정리
+- `build.sh`: 이미지 태그 인자 지원, 간소화된 빌드 프로세스
+- `deploy.sh`: Kustomize 기반 배포, 클러스터 모니터링 자동 설치, **Security Group 자동 설정**
+- `delete.sh`: Finalizer 자동 제거, ALB 삭제 포함
 
 ---
 
@@ -196,9 +272,12 @@ images:
 - Docker
 - Kubernetes (EKS)
 - Kustomize
+- Helm 3.x
 - Amazon ECR
 - MySQL (RDS)
+- Prometheus & Grafana
+- AWS ALB Ingress Controller
 
 ---
 
-**마지막 업데이트**: 2025-12-07 v2.0
+**마지막 업데이트**: 2025-12-08 v2.2

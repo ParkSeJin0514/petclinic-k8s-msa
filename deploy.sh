@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # Petclinic 배포 스크립트
-# 사용법: ./deploy.sh <RDS_ENDPOINT>
+# 사용법: ./deploy.sh <RDS_ENDPOINT> [DB_PASSWORD]
 # ============================================================================
 
 set -e
@@ -12,8 +12,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+AWS_REGION="ap-northeast-2"
+
 if [ -z "$1" ]; then
-    echo "사용법: $0 <RDS_ENDPOINT>"
+    echo "사용법: $0 <RDS_ENDPOINT> [DB_PASSWORD]"
     echo "예시: $0 petclinic-db.xxx.rds.amazonaws.com"
     exit 1
 fi
@@ -37,6 +39,14 @@ fi
 command -v kubectl &> /dev/null || { echo -e "${RED}[ERROR]${NC} kubectl 없음"; exit 1; }
 kubectl get nodes &> /dev/null || { echo -e "${RED}[ERROR]${NC} 클러스터 연결 실패"; exit 1; }
 echo -e "${GREEN}[SUCCESS]${NC} 클러스터 연결 완료"
+
+# EKS 클러스터 이름 자동 감지
+EKS_CLUSTER_NAME=$(kubectl config current-context | sed 's/.*:cluster\///' | sed 's/arn:aws:eks:[^:]*:[^:]*:cluster\///')
+if [ -z "$EKS_CLUSTER_NAME" ]; then
+    echo -e "${YELLOW}[WARN]${NC} EKS 클러스터 이름 감지 실패 - Security Group 설정 스킵"
+else
+    echo -e "${GREEN}[SUCCESS]${NC} EKS 클러스터: $EKS_CLUSTER_NAME"
+fi
 
 # Namespace 생성
 echo -e "${BLUE}[INFO]${NC} 📦 Namespace 생성..."
@@ -72,6 +82,89 @@ echo -e "${BLUE}[INFO]${NC}   - API Gateway..."
 kubectl wait --for=condition=ready pod -l app=api-gateway -n petclinic --timeout=180s || true
 
 echo -e "${GREEN}[SUCCESS]${NC} PetClinic 배포 완료"
+
+# ============================================================================
+# Security Group 인바운드 자동 설정
+# ALB -> EKS 클러스터 노드 통신 허용
+# ============================================================================
+configure_security_groups() {
+    echo ""
+    echo -e "${BLUE}[INFO]${NC} 🔒 Security Group 인바운드 설정..."
+    
+    # EKS 클러스터 Security Group 가져오기
+    CLUSTER_SG=$(aws eks describe-cluster \
+        --name "$EKS_CLUSTER_NAME" \
+        --region "$AWS_REGION" \
+        --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' \
+        --output text 2>/dev/null)
+    
+    if [ -z "$CLUSTER_SG" ] || [ "$CLUSTER_SG" == "None" ]; then
+        echo -e "${YELLOW}[WARN]${NC} 클러스터 Security Group을 가져올 수 없습니다"
+        return
+    fi
+    echo -e "${BLUE}[INFO]${NC}   클러스터 SG: $CLUSTER_SG"
+    
+    # ALB 생성 대기 (최대 60초)
+    echo -e "${BLUE}[INFO]${NC}   ALB 생성 대기 중..."
+    for i in {1..12}; do
+        ALB_COUNT=$(aws elbv2 describe-load-balancers \
+            --region "$AWS_REGION" \
+            --query "LoadBalancers[?contains(LoadBalancerName, 'petclinic')].LoadBalancerName" \
+            --output text 2>/dev/null | wc -w)
+        if [ "$ALB_COUNT" -gt 0 ]; then
+            break
+        fi
+        sleep 5
+    done
+    
+    # 모든 petclinic 관련 ALB의 Security Group 가져오기
+    ALB_SECURITY_GROUPS=$(aws elbv2 describe-load-balancers \
+        --region "$AWS_REGION" \
+        --query "LoadBalancers[?contains(LoadBalancerName, 'petclinic')].SecurityGroups[]" \
+        --output text 2>/dev/null | tr '\t' '\n' | sort -u)
+    
+    if [ -z "$ALB_SECURITY_GROUPS" ]; then
+        echo -e "${YELLOW}[WARN]${NC} ALB Security Group을 찾을 수 없습니다"
+        return
+    fi
+    
+    # 각 ALB Security Group에 대해 인바운드 규칙 설정
+    for ALB_SG in $ALB_SECURITY_GROUPS; do
+        echo -e "${BLUE}[INFO]${NC}   ALB SG: $ALB_SG"
+        
+        # 이미 인바운드 규칙이 있는지 확인
+        EXISTING_RULE=$(aws ec2 describe-security-groups \
+            --group-ids "$CLUSTER_SG" \
+            --region "$AWS_REGION" \
+            --query "SecurityGroups[0].IpPermissions[?contains(UserIdGroupPairs[].GroupId, '$ALB_SG')]" \
+            --output text 2>/dev/null)
+        
+        if [ -n "$EXISTING_RULE" ] && [ "$EXISTING_RULE" != "None" ]; then
+            echo -e "${GREEN}[SUCCESS]${NC}   ✓ $ALB_SG → $CLUSTER_SG 인바운드가 이미 설정되어있습니다"
+        else
+            # 인바운드 규칙 추가
+            aws ec2 authorize-security-group-ingress \
+                --group-id "$CLUSTER_SG" \
+                --protocol tcp \
+                --port 0-65535 \
+                --source-group "$ALB_SG" \
+                --region "$AWS_REGION" 2>/dev/null
+            
+            if [ $? -eq 0 ]; then
+                echo -e "${GREEN}[SUCCESS]${NC}   ✓ $ALB_SG → $CLUSTER_SG 인바운드 규칙 추가 완료"
+            else
+                echo -e "${YELLOW}[WARN]${NC}   $ALB_SG 인바운드 규칙 추가 실패 (이미 존재할 수 있음)"
+            fi
+        fi
+    done
+    
+    echo -e "${GREEN}[SUCCESS]${NC} Security Group 설정 완료"
+}
+
+# Security Group 설정 실행 (EKS 클러스터 이름이 있을 때만)
+if [ -n "$EKS_CLUSTER_NAME" ]; then
+    configure_security_groups
+fi
 
 # 클러스터 모니터링 배포
 echo ""
@@ -113,6 +206,13 @@ if [ -f "manifests/11-monitoring-cluster-values.yaml" ]; then
         sleep 10
         kubectl apply -f manifests/12-monitoring-cluster.yaml
         echo -e "${GREEN}[SUCCESS]${NC} 클러스터 모니터링 Ingress 배포 완료"
+        
+        # 모니터링 ALB에 대한 Security Group도 설정
+        if [ -n "$EKS_CLUSTER_NAME" ]; then
+            echo -e "${BLUE}[INFO]${NC} 모니터링 ALB Security Group 설정..."
+            sleep 15
+            configure_security_groups
+        fi
     fi
 else
     echo -e "${YELLOW}[WARN]${NC} 모니터링 values 파일 없음 - 스킵"
