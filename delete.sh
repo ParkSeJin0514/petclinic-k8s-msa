@@ -3,7 +3,7 @@
 # Petclinic 전체 삭제 스크립트 (Jenkins + ArgoCD 포함)
 # - Finalizer 자동 제거
 # - 단계별 진행
-# - ALB 삭제 포함
+# - ALB 삭제 포함 (k8s-* 패턴 포함)
 # - Jenkins EC2 및 ArgoCD 삭제
 # ============================================================================
 
@@ -26,7 +26,8 @@ echo "  - petclinic namespace (모든 서비스)"
 echo "  - monitoring namespace (모니터링)"
 echo "  - argocd namespace (ArgoCD)"
 echo "  - Jenkins ALB"
-echo "  - 관련 ALB (Application, Monitoring)"
+echo "  - 관련 ALB (Application, Monitoring, ArgoCD)"
+echo "  - k8s-* 패턴 ALB (Kubernetes Ingress ALB)"
 echo ""
 echo -e "${MAGENTA}※ Jenkins EC2는 Terraform destroy로 삭제하세요${NC}"
 echo ""
@@ -173,8 +174,16 @@ for NS in "${NAMESPACES[@]}"; do
 done
 echo ""
 
-# AWS ALB 수동 확인/삭제
-echo -e "${BLUE}[INFO] AWS ALB 확인 및 삭제 중...${NC}"
+# ============================================================================
+# AWS ALB 삭제
+# ============================================================================
+echo -e "${BLUE}================================================${NC}"
+echo -e "${BLUE}  AWS ALB 정리                                  ${NC}"
+echo -e "${BLUE}================================================${NC}"
+echo ""
+
+# 1. 명시적 ALB 이름으로 삭제
+echo -e "${BLUE}[INFO] 명시적 ALB 삭제...${NC}"
 ALB_LIST=("petclinic-microservices-alb" "petclinic-monitoring-alb" "cluster-monitoring-alb" "petclinic-kr-jenkins-alb")
 
 for ALB in "${ALB_LIST[@]}"; do
@@ -186,31 +195,67 @@ for ALB in "${ALB_LIST[@]}"; do
     fi
 done
 
-# 이름에 petclinic이 포함된 ALB 추가 검색 및 삭제
-echo -e "${BLUE}[INFO] petclinic 관련 ALB 추가 검색...${NC}"
-PETCLINIC_ALBS=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[?contains(LoadBalancerName, `petclinic`)].LoadBalancerArn' --output text 2>/dev/null || true)
-for ARN in $PETCLINIC_ALBS; do
+# 2. k8s-* 패턴 ALB 삭제 (Kubernetes Ingress로 생성된 ALB)
+echo -e "${BLUE}[INFO] k8s-* 패턴 ALB 삭제 (Kubernetes Ingress ALB)...${NC}"
+K8S_ALBS=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[*].[LoadBalancerArn,LoadBalancerName]' --output text 2>/dev/null | grep "k8s-" || true)
+while IFS=$'\t' read -r ARN NAME; do
     if [ -n "$ARN" ] && [ "$ARN" != "None" ]; then
-        ALB_NAME=$(aws elbv2 describe-load-balancers --load-balancer-arns "$ARN" --query 'LoadBalancers[0].LoadBalancerName' --output text 2>/dev/null || true)
-        echo -e "${YELLOW}  ALB 삭제: $ALB_NAME${NC}"
+        echo -e "${YELLOW}  ALB 삭제: $NAME${NC}"
         aws elbv2 delete-load-balancer --load-balancer-arn "$ARN" 2>/dev/null || true
-        echo -e "${GREEN}  ✓ $ALB_NAME 삭제됨${NC}"
+        echo -e "${GREEN}  ✓ $NAME 삭제됨${NC}"
     fi
-done
+done <<< "$K8S_ALBS"
+
+# 3. petclinic 포함 ALB 삭제
+echo -e "${BLUE}[INFO] petclinic 관련 ALB 삭제...${NC}"
+PETCLINIC_ALBS=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[*].[LoadBalancerArn,LoadBalancerName]' --output text 2>/dev/null | grep -i "petclinic" || true)
+while IFS=$'\t' read -r ARN NAME; do
+    if [ -n "$ARN" ] && [ "$ARN" != "None" ]; then
+        echo -e "${YELLOW}  ALB 삭제: $NAME${NC}"
+        aws elbv2 delete-load-balancer --load-balancer-arn "$ARN" 2>/dev/null || true
+        echo -e "${GREEN}  ✓ $NAME 삭제됨${NC}"
+    fi
+done <<< "$PETCLINIC_ALBS"
+
+# 4. argocd 포함 ALB 삭제
+echo -e "${BLUE}[INFO] argocd 관련 ALB 삭제...${NC}"
+ARGOCD_ALBS=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[*].[LoadBalancerArn,LoadBalancerName]' --output text 2>/dev/null | grep -i "argocd" || true)
+while IFS=$'\t' read -r ARN NAME; do
+    if [ -n "$ARN" ] && [ "$ARN" != "None" ]; then
+        echo -e "${YELLOW}  ALB 삭제: $NAME${NC}"
+        aws elbv2 delete-load-balancer --load-balancer-arn "$ARN" 2>/dev/null || true
+        echo -e "${GREEN}  ✓ $NAME 삭제됨${NC}"
+    fi
+done <<< "$ARGOCD_ALBS"
+
 echo ""
 
+# ALB 삭제 대기 (30초)
+echo -e "${BLUE}[INFO] ALB 삭제 대기 (30초)...${NC}"
+sleep 30
+
+# ============================================================================
 # Target Group 정리
-echo -e "${BLUE}[INFO] 미사용 Target Group 정리 중...${NC}"
-TGS=$(aws elbv2 describe-target-groups --query 'TargetGroups[?contains(TargetGroupName, `petclinic`) || contains(TargetGroupName, `k8s`)].TargetGroupArn' --output text 2>/dev/null || true)
-for TG_ARN in $TGS; do
+# ============================================================================
+echo -e "${BLUE}[INFO] Target Group 정리 중...${NC}"
+
+# k8s-, petclinic, argocd 관련 Target Group 삭제
+TG_LIST=$(aws elbv2 describe-target-groups --query 'TargetGroups[*].[TargetGroupArn,TargetGroupName]' --output text 2>/dev/null || true)
+while IFS=$'\t' read -r TG_ARN TG_NAME; do
     if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
-        TG_NAME=$(aws elbv2 describe-target-groups --target-group-arns "$TG_ARN" --query 'TargetGroups[0].TargetGroupName' --output text 2>/dev/null || true)
-        echo -e "${YELLOW}  Target Group 삭제: $TG_NAME${NC}"
-        aws elbv2 delete-target-group --target-group-arn "$TG_ARN" 2>/dev/null || true
+        # k8s-, petclinic, argocd 패턴 매칭
+        if [[ "$TG_NAME" == k8s-* ]] || [[ "$TG_NAME" == *petclinic* ]] || [[ "$TG_NAME" == *argocd* ]]; then
+            echo -e "${YELLOW}  Target Group 삭제: $TG_NAME${NC}"
+            aws elbv2 delete-target-group --target-group-arn "$TG_ARN" 2>/dev/null || true
+            echo -e "${GREEN}  ✓ $TG_NAME 삭제됨${NC}"
+        fi
     fi
-done
+done <<< "$TG_LIST"
 echo ""
 
+# ============================================================================
+# 완료
+# ============================================================================
 echo -e "${GREEN}================================================${NC}"
 echo -e "${GREEN}  🎉 PetClinic 삭제 완료! (CI/CD 포함)          ${NC}"
 echo -e "${GREEN}================================================${NC}"
@@ -219,3 +264,4 @@ echo -e "${BLUE}남은 리소스 확인:${NC}"
 echo "  kubectl get ns"
 echo "  kubectl get all -A"
 echo "  kubectl get ingress -A"
+echo "  aws elbv2 describe-load-balancers --query 'LoadBalancers[*].LoadBalancerName' --output table"
