@@ -1,10 +1,10 @@
 #!/bin/bash
 # ============================================================================
-# Petclinic 전체 삭제 스크립트 (Jenkins + ArgoCD 포함)
+# Petclinic 전체 삭제 스크립트 (EKS 위 리소스만)
 # - Finalizer 자동 제거
 # - 단계별 진행
 # - ALB 삭제 포함 (k8s-* 패턴 포함)
-# - Jenkins EC2 및 ArgoCD 삭제
+# - ArgoCD, External-Secrets 삭제
 # ============================================================================
 
 set -e
@@ -18,18 +18,19 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 echo -e "${RED}================================================${NC}"
-echo -e "${RED}  PetClinic 전체 삭제 스크립트 (CI/CD 포함)      ${NC}"
+echo -e "${RED}  PetClinic EKS 리소스 삭제 스크립트            ${NC}"
 echo -e "${RED}================================================${NC}"
 echo ""
 echo -e "${YELLOW}WARNING: 다음 리소스가 삭제됩니다:${NC}"
 echo "  - petclinic namespace (모든 서비스)"
 echo "  - monitoring namespace (모니터링)"
 echo "  - argocd namespace (ArgoCD)"
-echo "  - Jenkins ALB"
+echo "  - external-secrets namespace"
 echo "  - 관련 ALB (Application, Monitoring, ArgoCD)"
 echo "  - k8s-* 패턴 ALB (Kubernetes Ingress ALB)"
+echo "  - ClusterSecretStore"
 echo ""
-echo -e "${MAGENTA}※ Jenkins EC2는 Terraform destroy로 삭제하세요${NC}"
+echo -e "${MAGENTA}※ EKS, RDS, VPC 등 인프라는 Terragrunt destroy로 삭제하세요${NC}"
 echo ""
 read -p "계속하시겠습니까? (y/N): " -n 1 -r
 echo ""
@@ -40,7 +41,7 @@ fi
 echo ""
 
 # Step 1: kubectl 연결 확인
-echo -e "${GREEN}[Step 1/8] kubectl 연결 확인...${NC}"
+echo -e "${GREEN}[Step 1/10] kubectl 연결 확인...${NC}"
 if ! kubectl cluster-info > /dev/null 2>&1; then
     echo -e "${RED}Error: Kubernetes 클러스터에 연결할 수 없습니다${NC}"
     exit 1
@@ -49,7 +50,7 @@ echo -e "${GREEN}✓ 클러스터 연결됨${NC}"
 echo ""
 
 # Step 2: ArgoCD Application 삭제
-echo -e "${GREEN}[Step 2/8] ArgoCD Application 삭제...${NC}"
+echo -e "${GREEN}[Step 2/10] ArgoCD Application 삭제...${NC}"
 if kubectl get namespace argocd > /dev/null 2>&1; then
     # ArgoCD finalizer 제거 후 Application 삭제
     for APP in $(kubectl get application -n argocd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
@@ -63,35 +64,41 @@ else
 fi
 echo ""
 
-# Step 3: Ingress finalizer 제거 및 삭제
-echo -e "${GREEN}[Step 3/8] Ingress 삭제 (ALB 삭제 트리거)...${NC}"
-
-# petclinic namespace
-for INGRESS in $(kubectl get ingress -n petclinic -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo -e "${YELLOW}  Finalizer 제거: ${INGRESS}${NC}"
-    kubectl patch ingress ${INGRESS} -n petclinic -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+# Step 3: ClusterSecretStore 삭제
+echo -e "${GREEN}[Step 3/10] ClusterSecretStore 삭제...${NC}"
+for CSS in $(kubectl get clustersecretstore -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo -e "${YELLOW}  ClusterSecretStore 삭제: ${CSS}${NC}"
+    kubectl patch clustersecretstore ${CSS} -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+    kubectl delete clustersecretstore ${CSS} --wait=false 2>/dev/null || true
 done
-kubectl delete ingress --all -n petclinic --wait=false --timeout=10s 2>/dev/null || true
+echo -e "${GREEN}✓ ClusterSecretStore 삭제 완료${NC}"
+echo ""
 
-# monitoring namespace
-for INGRESS in $(kubectl get ingress -n monitoring -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo -e "${YELLOW}  Finalizer 제거: ${INGRESS}${NC}"
-    kubectl patch ingress ${INGRESS} -n monitoring -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
-done
-kubectl delete ingress --all -n monitoring --wait=false --timeout=10s 2>/dev/null || true
+# Step 4: ExternalSecret 삭제
+echo -e "${GREEN}[Step 4/10] ExternalSecret 삭제...${NC}"
+kubectl delete externalsecret --all -A --ignore-not-found=true 2>/dev/null || true
+echo -e "${GREEN}✓ ExternalSecret 삭제 완료${NC}"
+echo ""
 
-# argocd namespace
-for INGRESS in $(kubectl get ingress -n argocd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo -e "${YELLOW}  Finalizer 제거: ${INGRESS}${NC}"
-    kubectl patch ingress ${INGRESS} -n argocd -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+# Step 5: Ingress finalizer 제거 및 삭제
+echo -e "${GREEN}[Step 5/10] Ingress 삭제 (ALB 삭제 트리거)...${NC}"
+
+# 모든 namespace의 Ingress 삭제
+for NS in petclinic monitoring argocd external-secrets kube-system; do
+    if kubectl get namespace $NS > /dev/null 2>&1; then
+        for INGRESS in $(kubectl get ingress -n $NS -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            echo -e "${YELLOW}  Finalizer 제거: ${NS}/${INGRESS}${NC}"
+            kubectl patch ingress ${INGRESS} -n $NS -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+        done
+        kubectl delete ingress --all -n $NS --wait=false --timeout=10s 2>/dev/null || true
+    fi
 done
-kubectl delete ingress --all -n argocd --wait=false --timeout=10s 2>/dev/null || true
 
 echo -e "${GREEN}✓ Ingress 삭제 완료${NC}"
 echo ""
 
-# Step 4: ALB 삭제 대기
-echo -e "${GREEN}[Step 4/8] ALB 삭제 대기 (최대 60초)...${NC}"
+# Step 6: ALB 삭제 대기
+echo -e "${GREEN}[Step 6/10] ALB 삭제 대기 (최대 60초)...${NC}"
 for i in {1..12}; do
     INGRESS_COUNT=$(kubectl get ingress -A 2>/dev/null | grep -v "NAME" | wc -l || echo "0")
     if [ "$INGRESS_COUNT" -eq 0 ]; then
@@ -104,8 +111,8 @@ echo ""
 echo -e "${GREEN}✓ ALB 정리 완료${NC}"
 echo ""
 
-# Step 5: petclinic namespace 리소스 삭제
-echo -e "${GREEN}[Step 5/8] petclinic 리소스 삭제...${NC}"
+# Step 7: petclinic namespace 리소스 삭제
+echo -e "${GREEN}[Step 7/10] petclinic 리소스 삭제...${NC}"
 if kubectl get namespace petclinic > /dev/null 2>&1; then
     kubectl delete all --all -n petclinic --force --grace-period=0 2>/dev/null || true
     kubectl delete configmap --all -n petclinic --ignore-not-found=true 2>/dev/null || true
@@ -117,25 +124,25 @@ else
 fi
 echo ""
 
-# Step 6: monitoring namespace 리소스 삭제
-echo -e "${GREEN}[Step 6/8] monitoring 리소스 삭제...${NC}"
-if kubectl get namespace monitoring > /dev/null 2>&1; then
+# Step 8: external-secrets namespace 리소스 삭제
+echo -e "${GREEN}[Step 8/10] external-secrets 리소스 삭제...${NC}"
+if kubectl get namespace external-secrets > /dev/null 2>&1; then
     # Helm release 삭제
     if command -v helm &> /dev/null; then
-        helm uninstall kube-prometheus -n monitoring 2>/dev/null || true
+        helm uninstall external-secrets -n external-secrets 2>/dev/null || true
     fi
-    kubectl delete all --all -n monitoring --force --grace-period=0 2>/dev/null || true
-    kubectl delete configmap --all -n monitoring --ignore-not-found=true 2>/dev/null || true
-    kubectl delete secret --all -n monitoring --ignore-not-found=true 2>/dev/null || true
-    kubectl delete pvc --all -n monitoring --ignore-not-found=true 2>/dev/null || true
-    echo -e "${GREEN}✓ monitoring 리소스 삭제 완료${NC}"
+    kubectl delete all --all -n external-secrets --force --grace-period=0 2>/dev/null || true
+    kubectl delete configmap --all -n external-secrets --ignore-not-found=true 2>/dev/null || true
+    kubectl delete secret --all -n external-secrets --ignore-not-found=true 2>/dev/null || true
+    kubectl delete pvc --all -n external-secrets --ignore-not-found=true 2>/dev/null || true
+    echo -e "${GREEN}✓ external-secrets 리소스 삭제 완료${NC}"
 else
-    echo -e "${YELLOW}  monitoring namespace 없음 - 스킵${NC}"
+    echo -e "${YELLOW}  external-secrets namespace 없음 - 스킵${NC}"
 fi
 echo ""
 
-# Step 7: ArgoCD namespace 리소스 삭제
-echo -e "${GREEN}[Step 7/8] ArgoCD 리소스 삭제...${NC}"
+# Step 9: ArgoCD namespace 리소스 삭제
+echo -e "${GREEN}[Step 9/10] ArgoCD 리소스 삭제...${NC}"
 if kubectl get namespace argocd > /dev/null 2>&1; then
     # Helm release 삭제
     if command -v helm &> /dev/null; then
@@ -151,11 +158,11 @@ else
 fi
 echo ""
 
-# Step 8: Namespace 삭제
-echo -e "${GREEN}[Step 8/8] Namespace 삭제...${NC}"
+# Step 10: Namespace 삭제
+echo -e "${GREEN}[Step 10/10] Namespace 삭제...${NC}"
 
 # 삭제할 namespace 목록
-NAMESPACES=("petclinic" "monitoring" "argocd")
+NAMESPACES=("petclinic" "monitoring" "argocd" "external-secrets")
 
 for NS in "${NAMESPACES[@]}"; do
     if kubectl get namespace $NS > /dev/null 2>&1; then
@@ -184,7 +191,7 @@ echo ""
 
 # 1. 명시적 ALB 이름으로 삭제
 echo -e "${BLUE}[INFO] 명시적 ALB 삭제...${NC}"
-ALB_LIST=("petclinic-microservices-alb" "petclinic-monitoring-alb" "cluster-monitoring-alb" "petclinic-kr-jenkins-alb")
+ALB_LIST=("petclinic-microservices-alb" "petclinic-monitoring-alb" "cluster-monitoring-alb" "petclinic-kr-jenkins-alb" "argocd-alb")
 
 for ALB in "${ALB_LIST[@]}"; do
     ARN=$(aws elbv2 describe-load-balancers --names "$ALB" --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || true)
@@ -257,7 +264,7 @@ echo ""
 # 완료
 # ============================================================================
 echo -e "${GREEN}================================================${NC}"
-echo -e "${GREEN}  🎉 PetClinic 삭제 완료! (CI/CD 포함)          ${NC}"
+echo -e "${GREEN}  🎉 EKS 리소스 삭제 완료!                      ${NC}"
 echo -e "${GREEN}================================================${NC}"
 echo ""
 echo -e "${BLUE}남은 리소스 확인:${NC}"
@@ -265,3 +272,9 @@ echo "  kubectl get ns"
 echo "  kubectl get all -A"
 echo "  kubectl get ingress -A"
 echo "  aws elbv2 describe-load-balancers --query 'LoadBalancers[*].LoadBalancerName' --output table"
+echo ""
+echo -e "${MAGENTA}인프라 삭제 (Terragrunt):${NC}"
+echo "  cd ~/project/infra-terragrunt-github"
+echo "  cd bootstrap && terragrunt destroy --terragrunt-non-interactive -auto-approve"
+echo "  cd ../compute && terragrunt destroy --terragrunt-non-interactive -auto-approve"
+echo "  cd ../foundation && terragrunt destroy --terragrunt-non-interactive -auto-approve"
