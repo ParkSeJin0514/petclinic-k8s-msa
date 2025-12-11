@@ -1,8 +1,8 @@
-# PetClinic Kubernetes MSA
+# 🐾 PetClinic Kubernetes MSA
 
 Spring PetClinic 마이크로서비스 Kubernetes 배포 매니페스트
 
-## 아키텍처
+## 🏛️ 아키텍처
 
 ```
 ALB Ingress → API Gateway → [Customers|Visits|Vets] Services → MySQL RDS
@@ -10,7 +10,7 @@ ALB Ingress → API Gateway → [Customers|Visits|Vets] Services → MySQL RDS
             Discovery Server (Eureka)
 ```
 
-## 서비스 구성
+## 🧩 서비스 구성
 
 | 서비스 | 포트 | 설명 |
 |--------|------|------|
@@ -22,7 +22,7 @@ ALB Ingress → API Gateway → [Customers|Visits|Vets] Services → MySQL RDS
 | api-gateway | 8080 | API 라우팅 |
 | admin-server | 9090 | Spring Boot Admin |
 
-## 사용법
+## 🚀 사용법
 
 ```bash
 # 이미지 빌드 및 ECR Push
@@ -35,7 +35,7 @@ ALB Ingress → API Gateway → [Customers|Visits|Vets] Services → MySQL RDS
 ./delete.sh
 ```
 
-## 디렉토리 구조
+## 📁 디렉토리 구조
 
 ```
 ├── manifests/           # K8s 매니페스트 (00~12)
@@ -45,14 +45,16 @@ ALB Ingress → API Gateway → [Customers|Visits|Vets] Services → MySQL RDS
 └── kustomization.yaml   # Kustomize 설정
 ```
 
-## 모니터링
+## 📊 모니터링
 
-- **애플리케이션**: `petclinic-monitoring-alb` (Prometheus + Grafana)
-- **클러스터**: `cluster-monitoring-alb` (kube-prometheus-stack)
+| 대상 | ALB 이름 | 스택 |
+|------|----------|------|
+| 애플리케이션 | `petclinic-monitoring-alb` | Prometheus + Grafana |
+| 클러스터 | `cluster-monitoring-alb` | kube-prometheus-stack |
 
-## 요구사항
+## 📋 요구사항
 
-- EKS 클러스터 + AWS Load Balancer Controller
-- RDS MySQL
-- ECR 저장소
-- 소스: `../spring-petclinic-microservices-custom`
+- ✅ EKS 클러스터 + AWS Load Balancer Controller
+- ✅ RDS MySQL
+- ✅ ECR 저장소
+- ✅ 소스: `../spring-petclinic-microservices-custom`
